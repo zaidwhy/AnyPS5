@@ -177,7 +177,91 @@ void AddNullCrl() {
     Require(std::memcmp(before.data(), store, before.size()) == 0, "a null CRL leaves the store unchanged");
     X509_STORE_free_nid_postfix(store);
 
-    RequireThrows([] { X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), reinterpret_cast<void*>(1)); }, "a non-null CRL is unsupported before store access");
+    LibreSslX509Crl crl{};
+    RequireInvalidArgument([&] { X509_STORE_add_crl_nid_postfix(nullptr, &crl); }, "a non-null CRL needs a store");
+}
+
+struct TestCrl {
+    LibreSslX509Name issuer{};
+    LibreSslX509CrlInfo info{};
+    LibreSslX509Crl crl{};
+
+    TestCrl(const char* issuerEncoding, unsigned char hashByte) {
+        issuer.canonEnc = reinterpret_cast<unsigned char*>(const_cast<char*>(issuerEncoding));
+        issuer.canonEnclen = static_cast<int>(std::strlen(issuerEncoding));
+        info.issuer = &issuer;
+        crl.crl = &info;
+        crl.references = 1;
+        std::memset(crl.sha1Hash, hashByte, sizeof(crl.sha1Hash));
+        crl.sha1Hash[sizeof(crl.sha1Hash) - 1] = 0x5a;
+    }
+};
+
+const LibreSslX509Object* StoredObject(const LibreSslX509Store* store, int index) {
+    const auto* objects = static_cast<const Stack*>(store->objects);
+    return reinterpret_cast<const LibreSslX509Object*>(objects->data[index]);
+}
+
+void ReleaseObjects(LibreSslX509Store* store) {
+    auto* objects = static_cast<Stack*>(store->objects);
+    for (int index = 0; index < objects->num; ++index) free_nid_postfix(objects->data[index]);
+    objects->num = 0;
+    X509_STORE_free_nid_postfix(store);
+}
+
+void AddCrl() {
+    ERR_clear_error_nid_postfix();
+    auto* store = X509_STORE_new_nid_postfix();
+    Require(store != nullptr, "allocate a CRL store");
+    TestCrl first("issuer a", 0x11);
+    Require(X509_STORE_add_crl_nid_postfix(store, &first.crl) == 1, "a new CRL is stored");
+    Require(first.crl.references == 2, "the store holds a CRL reference");
+    Require(static_cast<const Stack*>(store->objects)->num == 1, "the store holds one object");
+    Require(StoredObject(store, 0)->type == LibreSslX509LookupCrl && StoredObject(store, 0)->data == &first.crl,
+        "the stored object is the CRL");
+    Require(ERR_peek_error_nid_postfix() == 0, "storing a CRL queues no error");
+
+    constexpr std::uint64_t alreadyStored = std::uint64_t{11} << 24 | std::uint64_t{0xfff} << 12 | 101;
+    Require(X509_STORE_add_crl_nid_postfix(store, &first.crl) == 0, "the same CRL is refused");
+    Require(ERR_get_error_nid_postfix() == alreadyStored && ERR_get_error_nid_postfix() == 0, "a refused CRL queues one error");
+    Require(first.crl.references == 2, "a refused CRL keeps its references");
+
+    TestCrl copy("issuer a", 0x11);
+    Require(X509_STORE_add_crl_nid_postfix(store, &copy.crl) == 0, "a CRL with the same issuer and hash is refused");
+    Require(ERR_get_error_nid_postfix() == alreadyStored, "a duplicate CRL queues the hash table error");
+    Require(copy.crl.references == 1, "a duplicate CRL keeps its references");
+
+    TestCrl newer("issuer a", 0x22);
+    Require(X509_STORE_add_crl_nid_postfix(store, &newer.crl) == 1, "a CRL with another hash from the same issuer is stored");
+    TestCrl other("issuer b", 0x11);
+    Require(X509_STORE_add_crl_nid_postfix(store, &other.crl) == 1, "a CRL with the same hash from another issuer is stored");
+    copy.crl.sha1Hash[0] = 0x12;
+    Require(X509_STORE_add_crl_nid_postfix(store, &copy.crl) == 1, "every hash byte takes part in the match");
+    Require(static_cast<const Stack*>(store->objects)->num == 4, "the store holds four CRLs");
+
+    LibreSslX509Name subject{};
+    subject.canonEnc = reinterpret_cast<unsigned char*>(const_cast<char*>("issuer a"));
+    subject.canonEnclen = 8;
+    unsigned char encoding[] = {0x30, 0x00};
+    LibreSslX509CertInfo certificateInfo{};
+    certificateInfo.subject = &subject;
+    certificateInfo.enc.enc = encoding;
+    certificateInfo.enc.len = sizeof(encoding);
+    LibreSslX509 certificate{};
+    certificate.certificateInfo = &certificateInfo;
+    certificate.references = 1;
+    Require(X509_STORE_add_cert_nid_postfix(store, &certificate) == 1, "a certificate named like a CRL issuer is stored beside it");
+    Require(X509_STORE_add_cert_nid_postfix(store, &certificate) == 0, "the certificate is refused a second time");
+    Require(ERR_get_error_nid_postfix() == alreadyStored, "a duplicate certificate queues the hash table error");
+    Require(certificate.references == 2, "the store holds one certificate reference");
+    Require(ERR_peek_error_nid_postfix() == 0, "no other error is queued");
+
+    TestCrl missing("issuer a", 0x33);
+    missing.crl.crl = nullptr;
+    RequireInvalidArgument([&] { X509_STORE_add_crl_nid_postfix(store, &missing.crl); }, "a CRL without info is rejected");
+    Require(missing.crl.references == 1, "a rejected CRL keeps its references");
+    Require(static_cast<const Stack*>(store->objects)->num == 5, "a rejected CRL is not stored");
+    ReleaseObjects(store);
 }
 
 const char* Host(const LibreSslX509VerifyParam* param, int index) {
@@ -425,4 +509,5 @@ int main(int argc, char**) {
     Hosts();
     LookupStack();
     AddNullCrl();
+    AddCrl();
 }

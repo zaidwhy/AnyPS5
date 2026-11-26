@@ -252,6 +252,42 @@ struct LibreSslX509Object {
     void* data;
 };
 
+struct LibreSslX509CrlInfo {
+    void* version;
+    void* signatureAlgorithm;
+    void* issuer;
+    void* lastUpdate;
+    void* nextUpdate;
+    void* revoked;
+    void* extensions;
+    unsigned char encoding[24];
+};
+
+struct LibreSslX509Crl {
+    LibreSslX509CrlInfo* crl;
+    void* signatureAlgorithm;
+    void* signature;
+    std::int32_t references;
+    std::int32_t flags;
+    void* akid;
+    void* idp;
+    std::int32_t idpFlags;
+    std::int32_t idpReasons;
+    void* crlNumber;
+    void* baseCrlNumber;
+    unsigned char sha1Hash[20];
+    void* issuers;
+    void* method;
+    void* methodData;
+};
+
+static_assert(sizeof(LibreSslX509CrlInfo) == 80);
+static_assert(offsetof(LibreSslX509CrlInfo, issuer) == 16);
+static_assert(sizeof(LibreSslX509Crl) == 120);
+static_assert(offsetof(LibreSslX509Crl, references) == 24);
+static_assert(offsetof(LibreSslX509Crl, sha1Hash) == 72);
+static_assert(offsetof(LibreSslX509Crl, issuers) == 96);
+
 using LibreSslPemPasswordCallback = int(APS5_VABI*)(char*, int, int, void*);
 
 struct LibreSslX509StoreContext {
@@ -1014,7 +1050,7 @@ int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(LibreSslX509StoreContex
 void* APS5_VABI X509_STORE_CTX_get_ex_data_nid_postfix(LibreSslX509StoreContext* context, int index);
 void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(LibreSslX509StoreContext* context, int error);
 int APS5_VABI X509_STORE_add_cert_nid_postfix(LibreSslX509Store* store, LibreSslX509* certificate);
-int APS5_VABI X509_STORE_add_crl_nid_postfix(LibreSslX509Store* store, void* crl);
+int APS5_VABI X509_STORE_add_crl_nid_postfix(LibreSslX509Store* store, LibreSslX509Crl* crl);
 LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Store* store, LibreSslX509LookupMethod* method);
 void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store);
 LibreSslX509Store* APS5_VABI X509_STORE_new_nid_postfix(void);
